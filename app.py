@@ -4,6 +4,8 @@ import smtplib
 import sqlite3
 from datetime import date, timedelta
 from email.message import EmailMessage
+import pickle
+from datetime import date
 
 import pandas as pd
 import plotly.express as px
@@ -149,13 +151,36 @@ def load_inventory():
     return df
 
 def get_reorder_quantity(row):
-    # Basic stock policy: cover 14 days of estimated demand,
-    # plus minimum stock, minus current stock.
-    target = max(
-        int(row["min_stock"]),
-        int(row["daily_sales"] * 14) + int(row["min_stock"])
-    )
-    return max(0, target - int(row["stock"]))
+    try:
+        with open("models/demand_model.pkl", "rb") as file:
+            model = pickle.load(file)
+
+        today = date.today()
+        features = pd.DataFrame([{
+            "day": today.day,
+            "weekday": today.weekday(),
+            "month": today.month,
+            "stock_available": int(row["stock"])
+        }])
+
+        predicted = float(model.predict(features)[0])
+        daily_sales = max(0, int(row["daily_sales"]))
+
+        # Keep the prediction within a conservative range.
+        predicted = max(0, min(predicted, daily_sales * 1.5))
+        target = max(
+            int(row["min_stock"]),
+            int(predicted * 14) + int(row["min_stock"])
+        )
+        return max(0, target - int(row["stock"]))
+
+    except Exception as e:
+        st.warning(f"ML prediction unavailable: {e}")
+        target = max(
+            int(row["min_stock"]),
+            int(row["daily_sales"]) * 14 + int(row["min_stock"])
+        )
+        return max(0, target - int(row["stock"]))
 
 def create_order_draft(row, quantity):
     with get_connection() as conn:
