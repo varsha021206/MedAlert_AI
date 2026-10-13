@@ -150,6 +150,7 @@ def load_inventory():
         ).dt.days
     return df
 
+
 def get_reorder_quantity(row):
     try:
         with open("models/demand_model.pkl", "rb") as file:
@@ -163,24 +164,31 @@ def get_reorder_quantity(row):
             "stock_available": int(row["stock"])
         }])
 
-        predicted = float(model.predict(features)[0])
+        predicted = max(0, float(model.predict(features)[0]))
         daily_sales = max(0, int(row["daily_sales"]))
+        stock = max(0, int(row["stock"]))
+        min_stock = max(0, int(row["min_stock"]))
 
-        # Keep the prediction within a conservative range.
-        predicted = max(0, min(predicted, daily_sales * 1.5))
-        target = max(
-            int(row["min_stock"]),
-            int(predicted * 14) + int(row["min_stock"])
-        )
-        return max(0, target - int(row["stock"]))
+        # Limit forecast to avoid unrealistic recommendations.
+        predicted = min(predicted, daily_sales * 1.2)
+
+        # Estimate demand for 7 days and maintain minimum stock.
+        target = max(min_stock, int(predicted * 7) + min_stock)
+        suggested_order = max(0, target - stock)
+
+        # Cap recommendation to 14 days of recorded sales.
+        max_order = daily_sales * 14
+        return min(suggested_order, max_order)
 
     except Exception as e:
         st.warning(f"ML prediction unavailable: {e}")
-        target = max(
-            int(row["min_stock"]),
-            int(row["daily_sales"]) * 14 + int(row["min_stock"])
-        )
-        return max(0, target - int(row["stock"]))
+        daily_sales = max(0, int(row["daily_sales"]))
+        stock = max(0, int(row["stock"]))
+        min_stock = max(0, int(row["min_stock"]))
+
+        target = max(min_stock, daily_sales * 7 + min_stock)
+        return min(max(0, target - stock), daily_sales * 14)
+
 
 def create_order_draft(row, quantity):
     with get_connection() as conn:
